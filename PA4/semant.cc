@@ -1,11 +1,11 @@
-
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include "semant.h"
 #include "utilities.h"
-
+#include "cool-tree.h"
+#include <map>
+#include <list>
 
 extern int semant_debug;
 extern char *curr_filename;
@@ -51,6 +51,7 @@ static Symbol
 //
 static void initialize_constants(void)
 {
+    // add_string() returns a symbol that points an entry.
     arg         = idtable.add_string("arg");
     arg2        = idtable.add_string("arg2");
     Bool        = idtable.add_string("Bool");
@@ -84,8 +85,97 @@ static void initialize_constants(void)
 
 
 ClassTable::ClassTable(Classes classes) : semant_errors(0) , error_stream(cerr) {
+  ///////////////////////////////////////////////////////////////
+  // First part: Inheritance Graph Check  ///////////////////////
+  ///////////////////////////////////////////////////////////////
+  std::map<Symbol, Symbol> classMap;
+  std::map<Symbol, Symbol>::iterator iter;
+  Class_ mainClassPtr;
 
-    /* Fill this in */
+  for (int i = classes->first(); classes->more(i); i = classes->next(i) ) {
+    // 1. check if class name is the same as its parent name  
+    Symbol class_name = classes->nth(i)->get_name();
+    Symbol parent_name = classes->nth(i)->get_parent_name();
+    if (class_name == parent_name) {
+      // if class name is the same as its parent, error
+      semant_error(classes->nth(i)) << "Class " << class_name << ", or an ancestor of " <<  class_name << ", is involved in an inheritance cycle.\n";
+    }
+    // 2.  check duplicated class definition 
+    iter = classMap.find(class_name);
+    if (iter != classMap.end()) {
+      // means that there is a duplicated defintion, error
+      semant_error(classes->nth(i)) << "Class " << class_name << " was previously defined.\n";
+    } else {
+      classMap.insert(std::pair<Symbol, Symbol>(class_name, parent_name));
+    }
+    if (class_name == Main) {
+      mainClassPtr = classes->nth(i);
+    }
+  }
+
+  // 3. check undefined parent class
+  int index = 0;
+  // search for the parent class
+  std::map<Symbol, Symbol>::iterator iterSearch;
+  // map for the classes in the inheritance cycle
+  std::map<Symbol, Class_> cycleMap;
+  std::map<Symbol, Class_>::iterator cycleIter;
+  std::map<Symbol, Class_>::iterator cycleSearchIter;
+  
+  for (iter = classMap.begin(); iter != classMap.end(); iter++) {
+    // search if its parent exists
+    iterSearch = classMap.find(iter->second);
+    if (iterSearch == classMap.end() && (iter->second != Object)) {
+      // its parent does not exist except class Object , error
+      semant_error(classes->nth(index)) << "Class " << iter->first << " inherits from an undefined class " << iter->second << ".\n";
+    } else {
+      // 4. check if there is an inheritance cycle
+      if (iterSearch->second == iter->first) {
+        // exists a cycle, add class name symbol to the list
+        cycleMap.insert(std::pair<Symbol, Class_>(iter->second, classes->nth(index)));
+      }
+    }
+    index++;
+  }
+
+  // 5. check if some class inherits from a class in the inheritance cycle.
+  index = 0;
+  for (iter = classMap.begin(); iter != classMap.end(); iter++) {
+    cycleSearchIter = cycleMap.find(iter->first);
+    if (cycleSearchIter == cycleMap.end()) {
+      cycleSearchIter = cycleMap.find(iter->second);
+      if (cycleSearchIter != cycleMap.end()) {
+        cycleMap.insert(std::pair<Symbol, Class_>(iter->first, classes->nth(index)));
+      }
+    }
+    index++;
+  }
+  // print error message of inheritance cycle
+  for (cycleIter = cycleMap.begin(); cycleIter != cycleMap.end(); cycleIter++) {
+    semant_error(cycleIter->second) << "Class " << cycleIter->first << ", or an ancestor of " << cycleIter->first << ", is involved in an inheritance cycle.\n";
+  }
+
+  // 6. check if there is a Main class
+  iterSearch = classMap.find(Main);
+  if (iterSearch == classMap.end()) {
+    semant_error() << "Class " << Main << " is not defined.\n";
+  } else {
+    // 7. check if there is a main function in the Main class
+    Features mainClassFeatures = mainClassPtr->get_Features();
+    int findMainFunc = 0;
+    for (int i = mainClassFeatures->first(); mainClassFeatures->more(i); i = mainClassFeatures->next(i)) {
+      if (mainClassFeatures->nth(i)->get_name() == main_meth) {
+        findMainFunc = 1;
+        break;
+      }
+    }
+    if (!findMainFunc) {
+      semant_error(mainClassPtr) << "No 'main' method in class Main.\n";
+    }
+  }
+  ////////////////////////////////////////////////////////////////////
+  //////  Second Part: Type Check  ///////////////////////////////////
+  ////////////////////////////////////////////////////////////////////
 
 }
 
@@ -188,6 +278,9 @@ void ClassTable::install_basic_classes() {
 						      Str, 
 						      no_expr()))),
 	       filename);
+
+   
+    
 }
 
 ////////////////////////////////////////////////////////////////////
